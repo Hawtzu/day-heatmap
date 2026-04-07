@@ -51,10 +51,9 @@ function fmt(date) {
 
 function todayStr() { return fmt(new Date()) }
 
-// 月の1日の曜日（月=0, 火=1, ..., 日=6）
+// 月の1日の曜日（日=0, 月=1, ..., 土=6 ← Googleカレンダー式）
 function startDow(year, month) {
-  const d = new Date(year, month, 1).getDay()
-  return (d + 6) % 7
+  return new Date(year, month, 1).getDay()
 }
 
 function daysInMonth(year, month) {
@@ -161,7 +160,7 @@ function drawMonthView(data) {
   )
 
   // 曜日ラベル
-  const dowLabels = ["月","火","水","木","金","土","日"]
+  const dowLabels = ["日","月","火","水","木","金","土"]
   ctx.setFont(Font.systemFont(11))
   ctx.setTextColor(new Color(COLORS.text))
   const gridStartY = pad + headerH + dowLabelH
@@ -308,8 +307,9 @@ function drawYearView(data) {
 
 // ── どちらのビューを表示するか ──
 function chooseView() {
-  // 現在の分が偶数なら月ビュー、奇数なら年ビュー
-  return new Date().getMinutes() % 2 === 0 ? "month" : "year"
+  // 15秒ごとに切り替え（ウィジェット更新タイミングで交互に見える）
+  const sec = Math.floor(Date.now() / 15000)
+  return sec % 2 === 0 ? "month" : "year"
 }
 
 // ── メイン ──
