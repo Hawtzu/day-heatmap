@@ -1,6 +1,6 @@
-// DayHeatmap v5 — 2026-04-08
+// DayHeatmap v6 — 2026-04-08
 // 一日の評価(1〜4)をヒートマップで表示
-// Notion日記DBと連携
+// 左:月カレンダー + 右:年ミニカレンダー 統合表示
 // Scriptable (iOS) Medium ウィジェット用
 
 // ── 設定 ──
@@ -218,141 +218,122 @@ async function promptScore() {
 }
 
 // ══════════════════════════════
-//  月ビュー（当月カレンダー）
+//  統合ビュー（左:月 + 右:年）
 // ══════════════════════════════
-function drawMonthView(data) {
+function drawWidget(data) {
   const now = new Date()
   const year = now.getFullYear()
   const month = now.getMonth()
   const todayKey = todayStr()
 
+  const canvasW = 540
+  const canvasH = 260
+  const pad = WIDGET_PADDING
+  const headerH = 24
+  const dowLabelH = 14
+  const dividerX = 290 // 左右の分割位置
+
+  const ctx = new DrawContext()
+  ctx.size = new Size(canvasW, canvasH)
+  ctx.opaque = false
+  ctx.respectScreenScale = true
+
+  // 背景
+  ctx.setFillColor(new Color(COLORS.bg))
+  ctx.fillRect(new Rect(0, 0, canvasW, canvasH))
+
+  // ────────────────────────
+  //  左半分: 月カレンダー
+  // ────────────────────────
   const days = daysInMonth(year, month)
   const firstDow = startDow(year, month)
   const totalWeeks = Math.ceil((days + firstDow) / 7)
 
-  const pad = WIDGET_PADDING
-  const headerH = 28
-  const dowLabelH = 16
+  const monthGridW = dividerX - pad - 8
+  const mGap = 3
+  const mCellH = Math.floor((canvasH - pad * 2 - headerH - dowLabelH - (totalWeeks - 1) * mGap) / totalWeeks)
+  const mCellW = Math.floor((monthGridW - 6 * mGap) / 7)
+  const mCell = Math.min(mCellW, mCellH)
+  const mStepX = mCell + mGap
+  const mStepY = mCell + mGap
 
-  const canvasW = 540
-  const canvasH = 260
-  const gap = 3
-  const gridH = canvasH - pad * 2 - headerH - dowLabelH
-  const cellSize = Math.floor((gridH - (totalWeeks - 1) * gap) / totalWeeks)
-  const step = cellSize + gap
-
-  const ctx = new DrawContext()
-  ctx.size = new Size(canvasW, canvasH)
-  ctx.opaque = false
-  ctx.respectScreenScale = true
-
-  ctx.setFillColor(new Color(COLORS.bg))
-  ctx.fillRect(new Rect(0, 0, canvasW, canvasH))
-
-  const gridW = canvasW - pad * 2
+  // ヘッダー
   const monthNames = ["1月","2月","3月","4月","5月","6月","7月","8月","9月","10月","11月","12月"]
-  ctx.setFont(Font.boldSystemFont(15))
+  ctx.setFont(Font.boldSystemFont(14))
   ctx.setTextColor(new Color(COLORS.textBright))
-  ctx.drawTextInRect(`${year}年 ${monthNames[month]}`, new Rect(pad, pad, gridW, headerH))
+  ctx.drawTextInRect(`${year}年 ${monthNames[month]}`, new Rect(pad, pad, monthGridW, headerH))
 
+  // 曜日ラベル
   const dowLabels = ["日","月","火","水","木","金","土"]
-  ctx.setFont(Font.systemFont(11))
+  ctx.setFont(Font.systemFont(9))
   ctx.setTextColor(new Color(COLORS.text))
-  const gridStartY = pad + headerH + dowLabelH
+  const mGridStartY = pad + headerH + dowLabelH
   for (let c = 0; c < 7; c++) {
-    const x = pad + c * step + cellSize / 2 - 6
-    ctx.drawTextInRect(dowLabels[c], new Rect(x, pad + headerH, 16, dowLabelH))
+    const x = pad + c * mStepX + mCell / 2 - 5
+    ctx.drawTextInRect(dowLabels[c], new Rect(x, pad + headerH, 14, dowLabelH))
   }
 
+  // 日付セル
   for (let day = 1; day <= days; day++) {
     const idx = firstDow + day - 1
     const col = idx % 7
     const row = Math.floor(idx / 7)
-
-    const x = pad + col * step
-    const y = gridStartY + row * step
-
+    const x = pad + col * mStepX
+    const y = mGridStartY + row * mStepY
     const key = fmt(new Date(year, month, day))
     const score = data[key] || 0
 
     ctx.setFillColor(new Color(getColor(score)))
-    ctx.fillRect(new Rect(x, y, cellSize, cellSize))
+    ctx.fillRect(new Rect(x, y, mCell, mCell))
 
-    ctx.setFont(Font.systemFont(10))
+    ctx.setFont(Font.systemFont(9))
     ctx.setTextColor(new Color(score >= 3 ? "#000000" : COLORS.text))
-    ctx.drawTextInRect(String(day), new Rect(x + 2, y + 2, cellSize - 4, 14))
+    ctx.drawTextInRect(String(day), new Rect(x + 1, y + 1, mCell - 2, 12))
 
     if (key === todayKey) {
       ctx.setStrokeColor(new Color(COLORS.today))
       ctx.setLineWidth(2)
-      ctx.strokeRect(new Rect(x, y, cellSize, cellSize))
+      ctx.strokeRect(new Rect(x, y, mCell, mCell))
     }
   }
 
-  return ctx.getImage()
-}
+  // ────────────────────────
+  //  右半分: 年ミニカレンダー
+  // ────────────────────────
+  const rightX = dividerX
+  const rightW = canvasW - pad - rightX
+  const rightH = canvasH - pad * 2
 
-// ══════════════════════════════
-//  年ビュー（12ヶ月一覧）
-// ══════════════════════════════
-function drawYearView(data) {
-  const now = new Date()
-  const year = now.getFullYear()
-  const todayKey = todayStr()
+  const yCols = 3 // 3列
+  const yRows = 4 // 4行
+  const blockGap = 2 // 月ブロック間の隙間（最小限）
 
-  const pad = WIDGET_PADDING
-  const headerH = 28
-  const monthCols = 4
-  const monthRows = 3
+  // 各月ブロックのサイズ計算
+  const blockW = Math.floor((rightW - (yCols - 1) * blockGap) / yCols)
+  const blockH = Math.floor((rightH - (yRows - 1) * blockGap) / yRows)
 
-  const canvasW = 540
-  const canvasH = 260
-
-  const gridAreaW = canvasW - pad * 2
-  const gridAreaH = canvasH - pad * 2 - headerH
-  const monthW = Math.floor(gridAreaW / monthCols)
-  const monthH = Math.floor(gridAreaH / monthRows)
-
-  const miniCellSize = Math.floor(Math.min((monthW - 8) / 7, (monthH - 18) / 6))
+  // ミニセルサイズ（7列 × 最大6行をブロック内に収める）
   const miniGap = 1
-  const miniStep = miniCellSize + miniGap
-
-  const ctx = new DrawContext()
-  ctx.size = new Size(canvasW, canvasH)
-  ctx.opaque = false
-  ctx.respectScreenScale = true
-
-  ctx.setFillColor(new Color(COLORS.bg))
-  ctx.fillRect(new Rect(0, 0, canvasW, canvasH))
-
-  ctx.setFont(Font.boldSystemFont(15))
-  ctx.setTextColor(new Color(COLORS.textBright))
-  ctx.drawTextInRect(`${year}年`, new Rect(pad, pad, gridAreaW, headerH))
-
-  const monthNames = ["1月","2月","3月","4月","5月","6月","7月","8月","9月","10月","11月","12月"]
+  const miniCell = Math.floor(Math.min((blockW - 6 * miniGap) / 7, (blockH - 5 * miniGap) / 6))
+  const miniStep = miniCell + miniGap
 
   for (let m = 0; m < 12; m++) {
-    const mc = m % monthCols
-    const mr = Math.floor(m / monthCols)
+    const mc = m % yCols
+    const mr = Math.floor(m / yCols)
 
-    const mx = pad + mc * monthW
-    const my = pad + headerH + mr * monthH
+    const bx = rightX + mc * (blockW + blockGap)
+    const by = pad + mr * (blockH + blockGap)
 
-    ctx.setFont(Font.boldSystemFont(9))
-    ctx.setTextColor(new Color(COLORS.text))
-    ctx.drawTextInRect(monthNames[m], new Rect(mx + 2, my, monthW, 14))
+    const mDays = daysInMonth(year, m)
+    const mFirstDow = startDow(year, m)
 
-    const days = daysInMonth(year, m)
-    const firstDow = startDow(year, m)
-    const miniStartY = my + 15
-
-    for (let day = 1; day <= days; day++) {
-      const idx = firstDow + day - 1
+    for (let day = 1; day <= mDays; day++) {
+      const idx = mFirstDow + day - 1
       const col = idx % 7
       const row = Math.floor(idx / 7)
 
-      const x = mx + col * miniStep + 2
-      const y = miniStartY + row * miniStep
+      const x = bx + col * miniStep
+      const y = by + row * miniStep
 
       const key = fmt(new Date(year, m, day))
       const score = data[key] || 0
@@ -362,12 +343,12 @@ function drawYearView(data) {
       } else {
         ctx.setFillColor(new Color(getColor(score)))
       }
-      ctx.fillRect(new Rect(x, y, miniCellSize, miniCellSize))
+      ctx.fillRect(new Rect(x, y, miniCell, miniCell))
 
       if (key === todayKey) {
         ctx.setStrokeColor(new Color(COLORS.today))
-        ctx.setLineWidth(1.5)
-        ctx.strokeRect(new Rect(x, y, miniCellSize, miniCellSize))
+        ctx.setLineWidth(1)
+        ctx.strokeRect(new Rect(x, y, miniCell, miniCell))
       }
     }
   }
@@ -375,37 +356,20 @@ function drawYearView(data) {
   return ctx.getImage()
 }
 
-// ── どちらのビューを表示するか ──
-function chooseView() {
-  const sec = Math.floor(Date.now() / 15000)
-  return sec % 2 === 0 ? "month" : "year"
-}
-
 // ── メイン ──
 if (config.runsInWidget) {
-  // ウィジェット: キャッシュから高速表示
   const data = loadCache()
   const widget = new ListWidget()
-  const view = chooseView()
-  widget.backgroundImage = view === "month"
-    ? drawMonthView(data)
-    : drawYearView(data)
+  widget.backgroundImage = drawWidget(data)
   widget.setPadding(0, 0, 0, 0)
   Script.setWidget(widget)
 } else {
-  // アプリ内: スコア入力 → Notion保存
   await promptScore()
   const data = await loadData()
-
-  const w1 = new ListWidget()
-  w1.backgroundImage = drawMonthView(data)
-  w1.setPadding(0, 0, 0, 0)
-  await w1.presentMedium()
-
-  const w2 = new ListWidget()
-  w2.backgroundImage = drawYearView(data)
-  w2.setPadding(0, 0, 0, 0)
-  await w2.presentMedium()
+  const w = new ListWidget()
+  w.backgroundImage = drawWidget(data)
+  w.setPadding(0, 0, 0, 0)
+  await w.presentMedium()
 }
 
 Script.complete()
