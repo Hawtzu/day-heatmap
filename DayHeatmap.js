@@ -1,5 +1,5 @@
-// DayHeatmap v3 — 2026-04-08
-// 一日の評価(1〜5)をヒートマップで表示
+// DayHeatmap v4 — 2026-04-08
+// 一日の評価(1〜4)をヒートマップで表示
 // 月ビューと年ビューを交互に表示
 // Scriptable (iOS) Medium ウィジェット用
 
@@ -13,7 +13,6 @@ const COLORS = {
   level2: "#006d32",
   level3: "#26a641",
   level4: "#39d353",
-  level5: "#ffd700",
   text: "#8b949e",
   textBright: "#c9d1d9",
   today: "#58a6ff",
@@ -23,7 +22,7 @@ const WIDGET_PADDING = 20 // ウィジェット角丸対策
 
 function getColor(score) {
   if (!score || score === 0) return COLORS.empty
-  return {1: COLORS.level1, 2: COLORS.level2, 3: COLORS.level3, 4: COLORS.level4, 5: COLORS.level5}[score] || COLORS.empty
+  return {1: COLORS.level1, 2: COLORS.level2, 3: COLORS.level3, 4: COLORS.level4}[score] || COLORS.empty
 }
 
 // ── データ読み書き ──
@@ -74,9 +73,8 @@ async function promptScore() {
 
   alert.addAction("1 - ダメだった")
   alert.addAction("2 - いまいち")
-  alert.addAction("3 - ふつう")
+  alert.addAction("3 - まあまあ")
   alert.addAction("4 - よかった")
-  alert.addAction("5 - 最高！")
   alert.addCancelAction("キャンセル")
 
   const choice = await alert.presentAlert()
@@ -90,17 +88,6 @@ async function promptScore() {
   done.message = `${today}: ${choice + 1}点`
   done.addAction("OK")
   await done.presentAlert()
-}
-
-// ── ストリーク計算 ──
-function calcStreak(data) {
-  let streak = 0
-  const d = new Date()
-  while (data[fmt(d)] > 0) {
-    streak++
-    d.setDate(d.getDate() - 1)
-  }
-  return streak
 }
 
 // ══════════════════════════════
@@ -146,15 +133,6 @@ function drawMonthView(data) {
   ctx.drawTextInRect(
     `${year}年 ${monthNames[month]}`,
     new Rect(pad, pad, gridW, headerH)
-  )
-
-  // ストリーク
-  const streak = calcStreak(data)
-  ctx.setFont(Font.systemFont(11))
-  ctx.setTextColor(new Color(COLORS.text))
-  ctx.drawTextInRect(
-    `${streak}日連続`,
-    new Rect(canvasW - pad - 70, pad + 4, 70, 18)
   )
 
   // 曜日ラベル
@@ -219,7 +197,7 @@ function drawYearView(data) {
   const monthRows = 3
 
   const canvasW = 540
-  const canvasH = 340
+  const canvasH = 260
 
   const gridAreaW = canvasW - pad * 2
   const gridAreaH = canvasH - pad * 2 - headerH
@@ -241,18 +219,9 @@ function drawYearView(data) {
   ctx.fillRect(new Rect(0, 0, canvasW, canvasH))
 
   // ヘッダー: 年
-  ctx.setFont(Font.boldSystemFont(16))
+  ctx.setFont(Font.boldSystemFont(15))
   ctx.setTextColor(new Color(COLORS.textBright))
   ctx.drawTextInRect(`${year}年`, new Rect(pad, pad, gridAreaW, headerH))
-
-  // ストリーク
-  const streak = calcStreak(data)
-  ctx.setFont(Font.systemFont(12))
-  ctx.setTextColor(new Color(COLORS.text))
-  ctx.drawTextInRect(
-    `${streak}日連続`,
-    new Rect(canvasW - pad - 70, pad + 2, 70, 18)
-  )
 
   const monthNames = ["1月","2月","3月","4月","5月","6月","7月","8月","9月","10月","11月","12月"]
 
