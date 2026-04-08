@@ -1,10 +1,22 @@
-// DayHeatmap v4 — 2026-04-08
+// DayHeatmap v5 — 2026-04-08
 // 一日の評価(1〜4)をヒートマップで表示
-// 月ビューと年ビューを交互に表示
+// Notion日記DBと連携
 // Scriptable (iOS) Medium ウィジェット用
 
 // ── 設定 ──
 const DATA_FILE = "day_heatmap.json"
+const CONFIG_FILE = "day_heatmap_config.json"
+
+// config.jsonからNotion設定を読み込み
+function loadConfig() {
+  const fm = FileManager.iCloud()
+  const path = fm.joinPath(fm.documentsDirectory(), CONFIG_FILE)
+  if (!fm.fileExists(path)) return null
+  fm.downloadFileFromiCloud(path)
+  return JSON.parse(fm.readString(path))
+}
+
+const CONFIG = loadConfig()
 
 const COLORS = {
   bg: "#0d1117",
@@ -18,15 +30,15 @@ const COLORS = {
   today: "#58a6ff",
 }
 
-const WIDGET_PADDING = 20 // ウィジェット角丸対策
+const WIDGET_PADDING = 20
 
 function getColor(score) {
   if (!score || score === 0) return COLORS.empty
   return {1: COLORS.level1, 2: COLORS.level2, 3: COLORS.level3, 4: COLORS.level4}[score] || COLORS.empty
 }
 
-// ── データ読み書き ──
-function loadData() {
+// ── ローカルキャッシュ読み書き ──
+function loadCache() {
   const fm = FileManager.iCloud()
   const path = fm.joinPath(fm.documentsDirectory(), DATA_FILE)
   if (!fm.fileExists(path)) return {}
@@ -34,10 +46,126 @@ function loadData() {
   return JSON.parse(fm.readString(path))
 }
 
-function saveData(data) {
+function saveCache(data) {
   const fm = FileManager.iCloud()
   const path = fm.joinPath(fm.documentsDirectory(), DATA_FILE)
   fm.writeString(path, JSON.stringify(data, null, 2))
+}
+
+// ── Notion API ──
+async function notionRequest(endpoint, method, body) {
+  if (!CONFIG) return null
+  const req = new Request(`https://api.notion.com/v1/${endpoint}`)
+  req.method = method
+  req.headers = {
+    "Authorization": `Bearer ${CONFIG.NOTION_TOKEN}`,
+    "Notion-Version": "2022-06-28",
+    "Content-Type": "application/json",
+  }
+  if (body) req.body = JSON.stringify(body)
+  try {
+    return await req.loadJSON()
+  } catch (e) {
+    console.error(`Notion API error: ${e}`)
+    return null
+  }
+}
+
+// Notionから全スコアを取得
+async function loadFromNotion() {
+  if (!CONFIG) return null
+  const result = await notionRequest(
+    `databases/${CONFIG.DIARY_DB_ID}/query`,
+    "POST",
+    { page_size: 100 }
+  )
+  if (!result || !result.results) return null
+
+  const data = {}
+  for (const page of result.results) {
+    const props = page.properties
+    // タイトル（日付文字列）を取得
+    const titleArr = props["名前"]?.title
+    if (!titleArr || titleArr.length === 0) continue
+    const dateKey = titleArr[0].plain_text
+
+    // スコアを取得
+    const scoreSelect = props["スコア"]?.select
+    if (scoreSelect) {
+      data[dateKey] = parseInt(scoreSelect.name, 10)
+    }
+  }
+  return data
+}
+
+// Notionで今日のページを検索
+async function findTodayPage(today) {
+  if (!CONFIG) return null
+  const result = await notionRequest(
+    `databases/${CONFIG.DIARY_DB_ID}/query`,
+    "POST",
+    {
+      filter: {
+        property: "名前",
+        title: { equals: today }
+      }
+    }
+  )
+  if (result && result.results && result.results.length > 0) {
+    return result.results[0].id
+  }
+  return null
+}
+
+// Notionにスコアを保存（ページ作成 or 更新）
+async function saveToNotion(today, score) {
+  if (!CONFIG) return false
+
+  const existingId = await findTodayPage(today)
+
+  if (existingId) {
+    // 既存ページを更新
+    await notionRequest(`pages/${existingId}`, "PATCH", {
+      properties: {
+        "スコア": { select: { name: String(score) } }
+      }
+    })
+  } else {
+    // 新規ページ作成
+    await notionRequest("pages", "POST", {
+      parent: { database_id: CONFIG.DIARY_DB_ID },
+      properties: {
+        "名前": { title: [{ text: { content: today } }] },
+        "スコア": { select: { name: String(score) } },
+        "日付": { date: { start: today } }
+      }
+    })
+  }
+  return true
+}
+
+// ── データ読み込み（Notion優先、フォールバックでキャッシュ）──
+async function loadData() {
+  // Notion から取得を試みる
+  const notionData = await loadFromNotion()
+  if (notionData) {
+    // キャッシュを更新
+    saveCache(notionData)
+    return notionData
+  }
+  // フォールバック: ローカルキャッシュ
+  return loadCache()
+}
+
+// ── データ保存（Notion + ローカルキャッシュ）──
+async function saveData(today, score) {
+  // Notion に保存
+  await saveToNotion(today, score)
+
+  // ローカルキャッシュも更新
+  const cache = loadCache()
+  cache[today] = score
+  saveCache(cache)
 }
 
 // ── 日付ユーティリティ ──
@@ -50,7 +178,6 @@ function fmt(date) {
 
 function todayStr() { return fmt(new Date()) }
 
-// 月の1日の曜日（日=0, 月=1, ..., 土=6 ← Googleカレンダー式）
 function startDow(year, month) {
   return new Date(year, month, 1).getDay()
 }
@@ -61,9 +188,9 @@ function daysInMonth(year, month) {
 
 // ── アプリ起動時：スコア入力 ──
 async function promptScore() {
-  const data = loadData()
   const today = todayStr()
-  const existing = data[today]
+  const cache = loadCache()
+  const existing = cache[today]
 
   const alert = new Alert()
   alert.title = "今日の評価"
@@ -80,12 +207,12 @@ async function promptScore() {
   const choice = await alert.presentAlert()
   if (choice === -1) return
 
-  data[today] = choice + 1
-  saveData(data)
+  const score = choice + 1
+  await saveData(today, score)
 
   const done = new Alert()
-  done.title = "記録しました"
-  done.message = `${today}: ${choice + 1}点`
+  done.title = CONFIG ? "Notionに記録しました" : "ローカルに記録しました"
+  done.message = `${today}: ${score}点`
   done.addAction("OK")
   await done.presentAlert()
 }
@@ -107,11 +234,9 @@ function drawMonthView(data) {
   const headerH = 28
   const dowLabelH = 16
 
-  // キャンバスをMediumウィジェットの縦横比（約2.1:1）に固定
   const canvasW = 540
   const canvasH = 260
   const gap = 3
-  // セルサイズをキャンバス高さから逆算して収める
   const gridH = canvasH - pad * 2 - headerH - dowLabelH
   const cellSize = Math.floor((gridH - (totalWeeks - 1) * gap) / totalWeeks)
   const step = cellSize + gap
@@ -121,34 +246,24 @@ function drawMonthView(data) {
   ctx.opaque = false
   ctx.respectScreenScale = true
 
-  // 背景
   ctx.setFillColor(new Color(COLORS.bg))
   ctx.fillRect(new Rect(0, 0, canvasW, canvasH))
 
-  // ヘッダー: 年月
   const gridW = canvasW - pad * 2
   const monthNames = ["1月","2月","3月","4月","5月","6月","7月","8月","9月","10月","11月","12月"]
   ctx.setFont(Font.boldSystemFont(15))
   ctx.setTextColor(new Color(COLORS.textBright))
-  ctx.drawTextInRect(
-    `${year}年 ${monthNames[month]}`,
-    new Rect(pad, pad, gridW, headerH)
-  )
+  ctx.drawTextInRect(`${year}年 ${monthNames[month]}`, new Rect(pad, pad, gridW, headerH))
 
-  // 曜日ラベル
   const dowLabels = ["日","月","火","水","木","金","土"]
   ctx.setFont(Font.systemFont(11))
   ctx.setTextColor(new Color(COLORS.text))
   const gridStartY = pad + headerH + dowLabelH
   for (let c = 0; c < 7; c++) {
     const x = pad + c * step + cellSize / 2 - 6
-    ctx.drawTextInRect(
-      dowLabels[c],
-      new Rect(x, pad + headerH, 16, dowLabelH)
-    )
+    ctx.drawTextInRect(dowLabels[c], new Rect(x, pad + headerH, 16, dowLabelH))
   }
 
-  // カレンダーセル描画
   for (let day = 1; day <= days; day++) {
     const idx = firstDow + day - 1
     const col = idx % 7
@@ -159,20 +274,14 @@ function drawMonthView(data) {
 
     const key = fmt(new Date(year, month, day))
     const score = data[key] || 0
-    const color = getColor(score)
 
-    ctx.setFillColor(new Color(color))
+    ctx.setFillColor(new Color(getColor(score)))
     ctx.fillRect(new Rect(x, y, cellSize, cellSize))
 
-    // 日付番号を表示
     ctx.setFont(Font.systemFont(10))
     ctx.setTextColor(new Color(score >= 3 ? "#000000" : COLORS.text))
-    ctx.drawTextInRect(
-      String(day),
-      new Rect(x + 2, y + 2, cellSize - 4, 14)
-    )
+    ctx.drawTextInRect(String(day), new Rect(x + 2, y + 2, cellSize - 4, 14))
 
-    // 今日のハイライト枠
     if (key === todayKey) {
       ctx.setStrokeColor(new Color(COLORS.today))
       ctx.setLineWidth(2)
@@ -204,7 +313,6 @@ function drawYearView(data) {
   const monthW = Math.floor(gridAreaW / monthCols)
   const monthH = Math.floor(gridAreaH / monthRows)
 
-  // 各月のミニカレンダー: 7列 × 最大6行
   const miniCellSize = Math.floor(Math.min((monthW - 8) / 7, (monthH - 18) / 6))
   const miniGap = 1
   const miniStep = miniCellSize + miniGap
@@ -214,11 +322,9 @@ function drawYearView(data) {
   ctx.opaque = false
   ctx.respectScreenScale = true
 
-  // 背景
   ctx.setFillColor(new Color(COLORS.bg))
   ctx.fillRect(new Rect(0, 0, canvasW, canvasH))
 
-  // ヘッダー: 年
   ctx.setFont(Font.boldSystemFont(15))
   ctx.setTextColor(new Color(COLORS.textBright))
   ctx.drawTextInRect(`${year}年`, new Rect(pad, pad, gridAreaW, headerH))
@@ -232,7 +338,6 @@ function drawYearView(data) {
     const mx = pad + mc * monthW
     const my = pad + headerH + mr * monthH
 
-    // 月名
     ctx.setFont(Font.boldSystemFont(9))
     ctx.setTextColor(new Color(COLORS.text))
     ctx.drawTextInRect(monthNames[m], new Rect(mx + 2, my, monthW, 14))
@@ -252,7 +357,6 @@ function drawYearView(data) {
       const key = fmt(new Date(year, m, day))
       const score = data[key] || 0
 
-      // 未来はスキップ
       if (new Date(year, m, day) > now) {
         ctx.setFillColor(new Color(COLORS.bg))
       } else {
@@ -260,7 +364,6 @@ function drawYearView(data) {
       }
       ctx.fillRect(new Rect(x, y, miniCellSize, miniCellSize))
 
-      // 今日のハイライト
       if (key === todayKey) {
         ctx.setStrokeColor(new Color(COLORS.today))
         ctx.setLineWidth(1.5)
@@ -274,15 +377,14 @@ function drawYearView(data) {
 
 // ── どちらのビューを表示するか ──
 function chooseView() {
-  // 15秒ごとに切り替え（ウィジェット更新タイミングで交互に見える）
   const sec = Math.floor(Date.now() / 15000)
   return sec % 2 === 0 ? "month" : "year"
 }
 
 // ── メイン ──
-const data = loadData()
-
 if (config.runsInWidget) {
+  // ウィジェット: キャッシュから高速表示
+  const data = loadCache()
   const widget = new ListWidget()
   const view = chooseView()
   widget.backgroundImage = view === "month"
@@ -291,17 +393,17 @@ if (config.runsInWidget) {
   widget.setPadding(0, 0, 0, 0)
   Script.setWidget(widget)
 } else {
+  // アプリ内: スコア入力 → Notion保存
   await promptScore()
-  const updated = loadData()
+  const data = await loadData()
 
-  // プレビュー: 両方見せる
   const w1 = new ListWidget()
-  w1.backgroundImage = drawMonthView(updated)
+  w1.backgroundImage = drawMonthView(data)
   w1.setPadding(0, 0, 0, 0)
   await w1.presentMedium()
 
   const w2 = new ListWidget()
-  w2.backgroundImage = drawYearView(updated)
+  w2.backgroundImage = drawYearView(data)
   w2.setPadding(0, 0, 0, 0)
   await w2.presentMedium()
 }

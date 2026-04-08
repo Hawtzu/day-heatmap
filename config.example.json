@@ -1,0 +1,4 @@
+{
+  "NOTION_TOKEN": "your-notion-api-token-here",
+  "DIARY_DB_ID": "your-diary-database-id-here"
+}
