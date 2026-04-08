@@ -1,4 +1,4 @@
-// DayHeatmap v6 — 2026-04-08
+// DayHeatmap v7 — 2026-04-08
 // 一日の評価(1〜4)をヒートマップで表示
 // 左:月カレンダー + 右:年ミニカレンダー 統合表示
 // Scriptable (iOS) Medium ウィジェット用
@@ -89,10 +89,15 @@ async function loadFromNotion() {
     if (!titleArr || titleArr.length === 0) continue
     const dateKey = titleArr[0].plain_text
 
-    // スコアを取得
-    const scoreSelect = props["スコア"]?.select
-    if (scoreSelect) {
-      data[dateKey] = parseInt(scoreSelect.name, 10)
+    // スコア換算（EXPベース自動計算）を優先、なければ手動スコア
+    const formulaResult = props["スコア換算"]?.formula
+    if (formulaResult && formulaResult.string && formulaResult.string !== "0") {
+      data[dateKey] = parseInt(formulaResult.string, 10)
+    } else {
+      const scoreSelect = props["スコア"]?.select
+      if (scoreSelect) {
+        data[dateKey] = parseInt(scoreSelect.name, 10)
+      }
     }
   }
   return data
