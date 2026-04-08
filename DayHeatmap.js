@@ -1,4 +1,4 @@
-// DayHeatmap - Scriptable Widget
+// DayHeatmap v3 — 2026-04-08
 // 一日の評価(1〜5)をヒートマップで表示
 // 月ビューと年ビューを交互に表示
 // Scriptable (iOS) Medium ウィジェット用
@@ -111,26 +111,23 @@ function drawMonthView(data) {
   const year = now.getFullYear()
   const month = now.getMonth()
   const todayKey = todayStr()
-  const todayDate = now.getDate()
 
   const days = daysInMonth(year, month)
   const firstDow = startDow(year, month)
   const totalWeeks = Math.ceil((days + firstDow) / 7)
 
   const pad = WIDGET_PADDING
-  const headerH = 32
-  const dowLabelH = 20
-  const footerH = 20
+  const headerH = 28
+  const dowLabelH = 16
 
-  // セルサイズを計算（ウィジェット幅に合わせる）
+  // キャンバスをMediumウィジェットの縦横比（約2.1:1）に固定
   const canvasW = 540
-  const gridW = canvasW - pad * 2
-  const cellSize = Math.floor((gridW - 6 * 4) / 7) // 7列, 6ギャップ
-  const gap = 4
+  const canvasH = 260
+  const gap = 3
+  // セルサイズをキャンバス高さから逆算して収める
+  const gridH = canvasH - pad * 2 - headerH - dowLabelH
+  const cellSize = Math.floor((gridH - (totalWeeks - 1) * gap) / totalWeeks)
   const step = cellSize + gap
-
-  const gridH = totalWeeks * step - gap
-  const canvasH = pad + headerH + dowLabelH + gridH + footerH + pad
 
   const ctx = new DrawContext()
   ctx.size = new Size(canvasW, canvasH)
@@ -142,8 +139,9 @@ function drawMonthView(data) {
   ctx.fillRect(new Rect(0, 0, canvasW, canvasH))
 
   // ヘッダー: 年月
+  const gridW = canvasW - pad * 2
   const monthNames = ["1月","2月","3月","4月","5月","6月","7月","8月","9月","10月","11月","12月"]
-  ctx.setFont(Font.boldSystemFont(18))
+  ctx.setFont(Font.boldSystemFont(15))
   ctx.setTextColor(new Color(COLORS.textBright))
   ctx.drawTextInRect(
     `${year}年 ${monthNames[month]}`,
@@ -152,11 +150,11 @@ function drawMonthView(data) {
 
   // ストリーク
   const streak = calcStreak(data)
-  ctx.setFont(Font.systemFont(13))
+  ctx.setFont(Font.systemFont(11))
   ctx.setTextColor(new Color(COLORS.text))
   ctx.drawTextInRect(
     `${streak}日連続`,
-    new Rect(canvasW - pad - 80, pad + 4, 80, 20)
+    new Rect(canvasW - pad - 70, pad + 4, 70, 18)
   )
 
   // 曜日ラベル
